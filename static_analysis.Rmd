@@ -1,0 +1,397 @@
+---
+title: "Health Care"
+author: "Jas Kainth"
+date: "09/02/2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(message = FALSE)
+knitr::opts_chunk$set(warning = FALSE)
+library(tidyverse) # To clean the data and to create plots
+library(ggsci) # Colors
+library(scales)
+library(ggcorrplot)
+library(formattable)
+library(tidymodels)
+options(dplyr.summarise.inform = FALSE)
+```
+
+```{r dataSetup}
+# Load in the data 
+insurance <- read_csv("insurance.csv")
+
+# Are there any missing values?
+insurance %>% 
+  summarise_all(~ sum(is.na(.)))
+
+# What are some summary statistics of our data?
+insurance %>% 
+  summary()
+```
+
+
+```{r distributionOfFactorsTable}
+# Let's take a look at how some of the predictors will influence our predictions
+# So, firstly, we will take a look at the factors
+# We will take a look at 'sex', 'smoker', 'region' & also 'children'
+# Although children are a numerical value, they are discrete and the numbers only
+# range through 0-5 so we can use a boxplot to look at this distribution 
+# This won't work for age & bmi so we will use a scatterplot for those
+# First, let's create a table that gives us some summary statistics 
+insurance %>% 
+  select(Sex = sex, Children = children, Smoker = smoker, Region = region, 
+         charges) %>%
+  mutate_if(is.character, factor) %>% 
+  mutate(Children = factor(Children)) %>%
+  # Turn them into one column, we will facet it later
+  pivot_longer(Sex:Region, names_to = "variable", values_to = "values") %>%
+  mutate(values = str_to_title(values)) %>%
+  group_by(variable, values) %>% 
+  # Get the metrics we want to use
+  summarise(across(everything(), list(min = min, Q1 = ~quantile(., 0.25),
+                                      mean = mean, median = median, 
+                                      Q3 = ~quantile(., 0.75), max = max, 
+                                      sd = sd)),
+            n = n()) %>%
+  # Make the columns look nicer
+  mutate(Scenario = glue::glue("{ variable }: { values }"),
+         N = n,
+         `Min Charge` = charges_min,
+         `Q1 Charge` = charges_Q1,
+         `Mean Charge` = charges_mean,
+         `Median Charge` = charges_median,
+         `Q3 Charge` = charges_Q3,
+         `Max Charge` = charges_max,
+         `SD Charge` = charges_sd) %>% 
+  ungroup() %>%
+  select(Scenario, N, `Min Charge`, `Q1 Charge`, `Mean Charge`, 
+         `Median Charge`, `Q3 Charge`, `Max Charge`, `SD Charge`) %>%
+  # Create the table
+  formattable(list(area(col = 3:9) ~ function(x) currency(x),
+                   area(col = 3) ~ color_tile("white", "red"),
+                   area(col = 4) ~ color_tile("white", "red"),
+                   area(col = 5) ~ color_tile("white", "red"),
+                   area(col = 6) ~ color_tile("white", "red"),
+                   area(col = 7) ~ color_tile("white", "red"),
+                   area(col = 8) ~ color_tile("white", "red"),
+                   area(col = 9) ~ color_tile("white", "red")))
+
+
+```
+
+```{r distributionOfDiscretePlot , fig.height=6, fig.width=10, fig.align='center'}
+insurance %>% 
+  # Select the variables we want to look at
+  select(Sex = sex, Children = children, Smoker = smoker, Region = region, 
+         charges) %>% 
+  # Turn the variables into factors so they are all of the same type
+  # Also, factors are better to work with than characters
+  mutate_if(is.character, factor) %>% 
+  mutate(Children = factor(Children)) %>%
+  # Turn them into one column, we will facet it later
+  pivot_longer(Sex:Region, names_to = "variable", values_to = "values") %>%
+  mutate(values = str_to_title(values)) %>%
+  ggplot(aes(x = values, y = charges, color = variable)) +
+  geom_boxplot() + 
+  facet_wrap(~ variable, scales = "free_x") +
+  theme_minimal() + 
+  theme(text = element_text("Avenir Next Condensed"),
+        legend.position = "none") +
+  labs(title = "Distribution of Predictors",
+       subtitle = "Factors/Discrete Variables",
+       x = " ",
+       y = "Insurance Charges") +
+  scale_y_continuous(labels = dollar) + 
+  scale_color_futurama()
+```
+
+```{r distributionOfDiscretePlotSmoker, fig.height=6, fig.width=10, fig.align='center'}
+
+# Ok so clearly Smoker is the biggest difference
+# Let's see what happens if we adjust the other variables for smoker 
+insurance %>% 
+  # Select the variables we want to look at
+  select(Sex = sex, Children = children, Region = region, Smoker = smoker, 
+         charges) %>% 
+  # Turn the variables into factors so they are all of the same type
+  # Also, factors are better to work with than characters
+  mutate_if(is.character, factor) %>% 
+  mutate(Children = factor(Children),
+         Smoker = str_to_title(Smoker)) %>%
+  # Turn them into one column, we will facet it later
+  pivot_longer(Sex:Region, names_to = "variable", values_to = "values") %>%
+  mutate(values = str_to_title(values)) %>%
+  ggplot(aes(x = values, y = charges, color = Smoker)) +
+  geom_boxplot() + 
+  facet_wrap(~ variable, scales = "free_x") +
+  theme_minimal() + 
+  theme(text = element_text("Avenir Next Condensed")) +
+  guides(color = guide_legend(reverse = TRUE)) +
+  labs(title = "Distribution of Predictors Adjusted for Smoker",
+       subtitle = "Factors/Discrete Variables",
+       x = " ",
+       y = "Insurance Charges") +
+  scale_y_continuous(labels = dollar) + 
+  scale_color_lancet()
+```
+
+
+```{r distributionOfContinuous, fig.height=6, fig.width=10, fig.align='center'}
+# Now, we will take a look at how age and bmi effect the charges
+insurance %>% 
+  select(Age = age, BMI = bmi, charges) %>%
+  pivot_longer(Age:BMI, names_to = "variable", values_to = "values") %>%
+  ggplot(aes(x = values, y = charges, color = variable)) +
+  geom_point(alpha = 0.3) + 
+  geom_smooth(method = "lm") +
+  facet_wrap(~ variable, scale = "free_x") + 
+  theme_minimal() + 
+  theme(text = element_text("Avenir Next Condensed"),
+        legend.position = "none") +
+  labs(title = "Distribution of Predictors",
+       subtitle = "Continuous Variables",
+       x = " ",
+       y = "Insurance Charges") + 
+  scale_color_lancet() + 
+  scale_y_continuous(labels = dollar)
+  
+
+```
+
+```{r distributionOfContinuousSmoker, fig.height=6, fig.width=10, fig.align='center'}
+# It's weird how the Age & BMI facet is arranged
+# It is possible that the higher points are smokers
+# Let's make a plot to find out
+insurance %>% 
+  select(Age = age, BMI = bmi, charges, smoker) %>%
+  mutate(smoker = str_to_title(smoker)) %>%
+  pivot_longer(Age:BMI, names_to = "variable", values_to = "values") %>%
+  ggplot(aes(x = values, y = charges, color = smoker)) +
+  geom_point(alpha = 0.3) + 
+  geom_smooth(method = "lm", show.legend = FALSE) +
+  facet_wrap(~ variable, scale = "free_x") + 
+  theme_minimal() + 
+  theme(text = element_text("Avenir Next Condensed")) +
+  guides(color = guide_legend(override.aes = list(alpha = 1),
+                              reverse = TRUE)) +
+  labs(title = "Distribution of Predictors Adjusted for Smoker",
+       subtitle = "Continuous Variables",
+       x = " ",
+       y = "Insurance Charges",
+       color = "Smoker") + 
+  scale_color_lancet() + 
+  scale_y_continuous(labels = dollar)
+
+
+```
+
+
+```{r distributionOfResponse, fig.height=6, fig.width=10, fig.align='center'}
+# What does our response variable look like?
+insurance %>%
+  ggplot(aes(x = charges)) + 
+  geom_histogram(bins = 30, color = "white") + 
+  theme_minimal() + 
+  theme(text = element_text("Avenir Next Condensed")) + 
+  scale_x_continuous(labels = dollar) + 
+  labs(x = "Insurance Charges",
+       y = "Frequency",
+       title = "Distribution of Response Variable") 
+
+
+```
+
+```{r distributionOfResponse2, fig.height=6, fig.width=10, fig.align='center'}
+# Let's take a look at the QQplots 
+insurance %>% 
+  ggplot(aes(sample = charges)) + 
+  stat_qq() + 
+  stat_qq_line(color = "red", lty = 2) +
+  theme_minimal() + 
+  theme(text = element_text("Avenir Next Condensed")) + 
+  labs(x = "Theoretical Quantiles",
+       y = "Sample Quantiles",
+       title = "QQPlot of Response Variable")
+```
+
+```{r distributionOfResponse3, fig.height=6, fig.width=10, fig.align='center'}
+# It does not look normally distributed, looks more log-normal so let's apply a
+# transformation
+insurance %>%
+  ggplot(aes(x = charges)) + 
+  geom_histogram(bins = 30, color = "white") + 
+  theme_minimal() + 
+  theme(text = element_text("Avenir Next Condensed")) + 
+  scale_x_log10(labels = dollar) + 
+  labs(x = "Insurance Charges (Log scale)",
+       y = "Frequency",
+       title = "Distribution of Transformed Response Variable") 
+
+```
+
+```{r distributionOfResponse4, fig.height=6, fig.width=10, fig.align='center'}
+# QQPlot of the transformed
+insurance %>% 
+  ggplot(aes(sample = log10(charges))) + 
+  stat_qq() + 
+  stat_qq_line(color = "red", lty = 2) + 
+  theme_minimal() + 
+  theme(text = element_text("Avenir Next Condensed")) + 
+  labs(x = "Theoretical Quantiles",
+       y = "Sample Quantiles",
+       title = "QQPlot of Transformed Response Variable")
+
+# This looks a bit better
+```
+
+
+```{r Correlation, fig.height=6, fig.width=10, fig.align='center'}
+# Let's take a look at the correlation for each variable
+insurance %>% 
+  mutate(smoker = ifelse(smoker == "no", 0, 1)) %>%
+  select(age, bmi, children, smoker, charges) %>% 
+  cor() %>%
+  corrplot::corrplot()
+
+# The good thing here is that there is no multicollinearity (no high correlation
+# among predictors), also we see that some variables have 
+# high correlation with our response variable
+
+```
+
+### Linear Regression with Interaction
+
+
+```{r lm}
+# First, let's create a training set and test set
+set.seed(100)
+# Let's create a train/test split
+insurance_split <- initial_split(insurance, strata = charges)
+insurance_train <- training(insurance_split)
+insurance_test <- testing(insurance_split)
+# So we will create a linear model with an interaction term to try and create the
+# best model that we can
+lm(log(charges) ~ age + sex + bmi + children + smoker + region +
+     bmi:smoker + age:smoker, data = insurance_train) %>% 
+  summary()
+
+# So here we see that BMI has a p-value that is greater than 0.05 but it doesn't 
+# make sense to remove that since  we can't remove the BMI term and keep the
+# interaction
+
+# We see something funny here though, we see that for age and smoker interaction, 
+# the term is negative even though from our plots we saw that being a smoker has a 
+# line higher than the non-smoker line. This is probably because the slope of the 
+# line is very similar and the smoker term is just a bit higher (so they cancel out)
+
+# Let's remove this term and see if we get a better model
+lm(log(charges) ~ age + sex + bmi + children + smoker + region +
+     bmi:smoker, data = insurance_train) %>% 
+  summary()
+
+# Nope, the model is worse (higher Residual standard error and lower Adjusted R
+# squared)
+
+```
+
+```{r lmPlot, fig.height=6, fig.width=10, fig.align='center'}
+# So, let's create a table and a plot explaining over results
+model <- insurance_train %>% 
+  # Change the baseline for age and bmi, we will set them to their first quartile
+  mutate(age = age - 27,
+         bmi = bmi - 26) %>%
+  lm(log(charges) ~ age + sex + bmi + children + smoker + region +
+     bmi:smoker + age:smoker, data = .) 
+# We will create a plot that shows how the point estimates of the terms 
+model %>% 
+  broom::tidy() %>% 
+  mutate(point_estimate = exp(estimate),
+         conf_low = exp(estimate - 1.96 * std.error),
+         conf_high = exp(estimate + 1.96 * std.error)) %>% 
+  filter(term != "(Intercept)") %>% 
+  select(term, point_estimate, conf_low, conf_high) %>% 
+  mutate(term = c("Age", "Sex: Male", "BMI", "Children", "Smoker: Yes",
+                  "Region: Northwest", "Region: Southeast", "Region: Southwest",
+                  "BMI * Smoker (Yes)", "Age * Smoker (Yes)")) %>% 
+  mutate(term = fct_reorder(term, point_estimate)) %>% 
+  ggplot(aes(x = point_estimate, y = term)) + 
+  geom_errorbarh(aes(xmax = conf_high, xmin = conf_low), height = 0.5, 
+                 color = "grey50")+
+  geom_point(color = "grey25") + 
+  theme_minimal() + 
+  theme(text = element_text("Avenir Next Condensed")) + 
+  labs(title = "Linear Model Summary Output",
+       subtitle = "Baseline: Non-Smoker, Female, Northeast Region, Age = 27, BMI = 26 \n Intercept = 4111.713",
+       x = "Point Estimate with 95% CI",
+       y = " ")
+
+```
+
+```{r lmTable}
+# Create a summary table of our model
+model %>% 
+  broom::tidy() %>% 
+  filter(term != "(Intercept)") %>% 
+  mutate(point_estimate = exp(estimate),
+         conf_low = exp(estimate - 1.96 * std.error),
+         conf_high = exp(estimate + 1.96 * std.error)) %>% 
+  select(Term = term, `Point Estimate` = point_estimate, `Std Error` = std.error,
+         `P Value` = p.value) %>% 
+  mutate(Term = c("Age", "Sex: Male", "BMI", "Children", "Smoker: Yes",
+                  "Region: Northwest", "Region: Southeast", "Region: Southwest",
+                  "BMI * Smoker (Yes)", "Age * Smoker (Yes)"),
+         `P Value` = round(`P Value`, digit = 4),
+         `Point Estimate` = round(`Point Estimate`, 4),
+         `Std Error` = round(`Std Error`, 4)) %>% 
+  formattable(list(area(col = 2) ~ color_tile("white", "red"),
+                   area(col = 3) ~ color_tile("white", "red"),
+                   area(col = 4) ~ color_bar(color = "lightcoral")))
+
+
+```
+
+```{r rmse}
+# Let's get some statistics, we want Adjusted R Squared (which we already have)
+# Training RMSE & Test RMSE
+# Create a df for our predictions (adjust the age and bmi)
+training_df <- insurance_train %>%
+  mutate(age = age - 27,
+         bmi = bmi - 26)
+test_df <- insurance_test %>%
+  mutate(age = age - 27,
+         bmi = bmi- 26)
+# Get the predictions
+training_prediction <- model %>% 
+  predict(., newdata = training_df)
+test_prediction <- model %>% 
+  predict(., newdata = test_df)
+# Get the rmse for training and test set
+training_rmse <- Metrics::rmse(insurance_train$charges, exp(training_prediction))
+test_rmse <- Metrics::rmse(insurance_test$charges, exp(test_prediction))
+training_rmse
+test_rmse
+# Wow, the test rmse is actually lower than the training rmse which usually doesn't
+# happen
+
+```
+
+```{r lmPredictions, fig.height=6, fig.width=10, fig.align='center'}
+tibble(actual = insurance_test$charges,
+       predicted = exp(test_prediction)) %>% 
+  ggplot(aes(x = actual, y = predicted)) +
+  geom_point(color = "orange") + 
+  geom_abline(slope = 1, intercept = 0, color = "red", lty = 2) +
+  theme_minimal() + 
+  scale_x_continuous(label = dollar) + 
+  scale_y_continuous(label = dollar) + 
+  labs(x = "Actual Charges",
+       y = "Predicted Charges",
+       title = "Actual vs Predicted Charges for Linear Model")
+```
+
+
+
