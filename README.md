@@ -14,5 +14,5 @@ We first note the difference in the mean and median; likely occuring due to the 
 
 The plots below shows us boxplots of these variables, with one plot adjusting for smokers. 
 Factors Boxplot        |  Adjusted for Smoker
-:---------------------:|:---------------------:
+:------------------------:|:---------------------:
 ![Boxplot](https://github.com/JasKainth/HealthCareInsurance/blob/main/discrete.jpg)  |  ![Boxplot Adjusted](https://github.com/JasKainth/HealthCareInsurance/blob/main/discrete_smoker.jpg)
